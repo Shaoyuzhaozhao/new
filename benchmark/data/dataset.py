@@ -104,7 +104,7 @@ class WiMANSDataset(Dataset):
         environment: List[str],
     ) -> pd.DataFrame:
         """筛选数据"""
-        # 兼容不同列名：num_users 或 number_of_users
+        # 兼容不同列名
         num_users_col = "number_of_users" if "number_of_users" in df.columns else "num_users"
         if num_users_col in df.columns:
             df = df[df[num_users_col].isin(num_users)]
@@ -125,7 +125,6 @@ class WiMANSDataset(Dataset):
         random_seed: int,
     ) -> pd.DataFrame:
         """划分训练/测试集"""
-        # 兼容不同列名
         sample_id_col = None
         for col_name in ["label", "sample_id", "name", "id", "filename"]:
             if col_name in df.columns:
@@ -157,8 +156,7 @@ class WiMANSDataset(Dataset):
     def _build_label_mapping(self):
         """构建标签映射"""
         if self.task == "activity":
-            # WiMANS格式：user_1_activity, user_2_activity, ...
-            # 优先使用 user_1_activity，或者 activity
+            # WiMANS格式
             if "user_1_activity" in self.annotations.columns:
                 self.label_col = "user_1_activity"
             elif "activity" in self.annotations.columns:
@@ -167,8 +165,6 @@ class WiMANSDataset(Dataset):
                 self.label_col = "label"
 
             self.num_classes = 9
-
-            # 获取非空的标签值
             valid_labels = self.annotations[self.label_col].dropna().unique()
             unique_labels = sorted(valid_labels)
             self.label_map = {label: i for i, label in enumerate(unique_labels)}
@@ -179,7 +175,6 @@ class WiMANSDataset(Dataset):
             self.label_map = {label: i for i, label in enumerate(sorted(unique_labels))}
             self.num_classes = len(self.label_map)
         elif self.task == "location":
-            # WiMANS格式：user_1_location
             if "user_1_location" in self.annotations.columns:
                 self.label_col = "user_1_location"
             else:
@@ -205,13 +200,10 @@ class WiMANSDataset(Dataset):
         """
         加载.mat格式的原始CSI数据
 
-        WiMANS/Intel 5300格式：
-        - trace: (N, 1) object数组
-        - trace[i, 0]: (1, 1) 结构化数组，dtype包含'csi'字段
-        - trace[i, 0]['csi'][0, 0]: CSI复数数据 (3, 3, 30)
+        保留完整的天线维度，与.npy格式一致
 
         Returns:
-            CSI幅度数据，形状为 (T, 30)
+            CSI幅度数据，形状为 (T, 3, 3, 30)
         """
         mat_data = scio.loadmat(mat_path)
 
@@ -228,19 +220,15 @@ class WiMANSDataset(Dataset):
                 csi = packet_wrapper['csi'][0, 0]
 
                 if isinstance(csi, np.ndarray) and np.iscomplexobj(csi):
+                    # 保留完整形状 (3, 3, 30)，不做平均
                     csi_amp = np.abs(csi)
-
-                    if csi_amp.ndim == 3:
-                        csi_amp = csi_amp.mean(axis=(0, 1))
-                    elif csi_amp.ndim == 2:
-                        csi_amp = csi_amp.mean(axis=0)
-
                     csi_list.append(csi_amp)
 
             except Exception as e:
                 continue
 
         if len(csi_list) > 0:
+            # 堆叠得到 (T, 3, 3, 30)
             csi_data = np.stack(csi_list, axis=0)
             return csi_data.astype(np.float32)
         else:
@@ -279,7 +267,7 @@ class WiMANSDataset(Dataset):
         """获取单个样本"""
         row = self.annotations.iloc[idx]
 
-        # 获取样本名称 - WiMANS用'label'列存储文件名如 act_1_1
+        # 获取样本名称
         for col_name in ["label", "sample_id", "name", "id", "filename"]:
             if col_name in row.index:
                 sample_name = str(row[col_name])
@@ -323,9 +311,7 @@ class WiMANSDataset(Dataset):
         label_str = str(row[self.label_col])
         label = self.label_map.get(label_str, -1)
 
-        # 检查标签有效性
         if label < 0 or label >= self.num_classes:
-            # 如果标签无效，使用默认值0
             label = 0
 
         return spectrogram, label
